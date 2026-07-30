@@ -29,21 +29,28 @@ type, offset and length.
 
 ## Encoding
 
-`encode` writes FLAC with the **fixed predictors** and Rice-coded residuals,
+`encode` writes FLAC with **fixed predictors, LPC and stereo decorrelation**,
 every choice made by counting bits: each block is costed as CONSTANT, as each of
-the five fixed predictors, and as VERBATIM, and the cheapest wins; each residual
-is costed over every partition order and Rice parameter. No tuning constants.
+the five fixed predictors, as LPC at every order up to 12, and as VERBATIM, and
+the cheapest wins; a stereo pair is costed as independent, left/side, right/side
+and mid/side; each residual is costed over every partition order and Rice
+parameter. No tuning constants, no heuristics.
 
 `flac -t` accepts the output — which verifies both frame CRCs — and `flac -d`
 returns the input samples exactly.
 
-**No LPC and no stereo decorrelation**, which is the whole of the ratio gap and
-is measured rather than glossed: **0.56x-2.31x of `flac -5`** on the suite's
-sources, winning on noise and near-silence, losing by ~2.3x on tonal material
-where linear prediction earns its keep. Coefficient estimation is the real work
-in libFLAC and a bad estimate is worse than a fixed predictor, so this ships
-without one rather than with a guess. The exhaustive residual search also makes it
-slow — roughly 10 s per 70 KB of 24-bit stereo under nbb.
+**The ratio is at parity, measured: 0.56x-1.03x of `flac -5`** on the suite's
+sources — at or better than the reference on every one, and within 3% of
+`flac -8` on the hardest. Getting there took both pieces, in this order of
+effect: fixed predictors alone measured 0.56x-2.31x, LPC brought the worst case to
+1.95x, and stereo decorrelation brought it to 1.03x. On material whose channels
+resemble each other, decorrelation matters more than prediction quality does.
+
+What is still missing: LPC coefficient precision is fixed at 15 bits rather than
+searched, the residual search is exhaustive rather than pruned, and there is no
+`-e`-style exhaustive model search. It is correspondingly slow — roughly 30 s per
+70 KB of 24-bit stereo under nbb, since every order from 1 to 12 is costed for
+every block.
 
 When comparing sizes yourself, pass `--no-padding` to the reference: it writes an
 8 KB PADDING block by default, which makes a naive comparison on short inputs

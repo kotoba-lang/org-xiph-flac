@@ -10,10 +10,9 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
 - **Bit-exactness is the assertion.** FLAC is lossless; "decoded without
   throwing" proves nothing. Every fixture carries the reference's own samples.
 - **`test/flac/fixtures.cljc` is generated** — `nbb tools/record_fixtures.cljs`.
-- **The encoder has fixed predictors and no LPC**, and the docs say so. Do not
-  claim ratio parity: the measured spread is 0.56x-2.31x of `flac -5`, winning on
-  noise and silence and losing on tonal material, which is exactly where LPC
-  earns its keep.
+- **The encoder has fixed predictors, LPC and stereo decorrelation**, and is at
+  parity: 0.56x-1.03x of `flac -5` measured. The suite's bound is 1.15x, tight
+  enough to catch a regression — do not loosen it without a measurement.
 - **The reference must accept what we write.** `flac -t` verifies both frame
   CRCs, and `flac -d` must return the input samples exactly. A self round-trip
   proves nothing on its own.
@@ -66,9 +65,20 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
   straight ramp under the order-2 predictor) still costs ~512 bytes per 4096
   samples — there is no all-zero-partition shortcut in the format, so a test
   expecting near-zero is wrong, not the encoder.
-- **What is missing is LPC and stereo decorrelation**, in that order of value.
-  Coefficient estimation is the real work; a bad estimate is worse than a fixed
-  predictor, which is why this ships without one rather than with a guess.
-- **It is slow**: the exhaustive residual search costs roughly 10 s per 70 KB of
-  24-bit stereo under nbb. Correctness first; the search is the obvious thing to
-  prune if that ever matters.
+- **The LPC residual must be computed with the *quantised* coefficients through
+  the same floor division the decoder uses.** An encoder that predicts in floating
+  point and lets the decoder predict in integers produces a file only it can read,
+  and the failure is silent until a reference decoder sees it.
+- **Coefficient quantisation needs error feedback** — carry each rounding error
+  into the next coefficient, as libFLAC does, or a 15-bit quantisation drifts the
+  prediction.
+- **Autocorrelation needs a window.** Without one the estimate implies a periodic
+  signal and the coefficients predict the block wrap-around badly at the edges.
+- **The side channel of a decorrelated pair needs one extra bit**, and which
+  channel that is depends on the assignment (8/9/10). The decoder is unforgiving.
+- **Stereo decorrelation beat LPC on the test material**: fixed-only measured up
+  to 2.31x of the reference, LPC brought it to 1.95x, decorrelation to 1.03x.
+  When the ratio is off, check the channel layout before the predictor.
+- **It is slow**: every LPC order from 1 to 12 is costed for every block, on top
+  of the exhaustive residual search — roughly 30 s per 70 KB of 24-bit stereo
+  under nbb. Correctness first; pruning the order search is the obvious lever.

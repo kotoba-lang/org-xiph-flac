@@ -8,15 +8,19 @@
    partition every Rice parameter, and keep the cheapest. No search heuristics,
    no tuning constants.
 
-   **No LPC.** Estimating linear-prediction coefficients well is most of what
-   libFLAC does, and a bad estimate is worse than a fixed predictor. That is the
-   one thing standing between this and the reference's ratio, and it is stated
-   rather than papered over: the suite pins the size against `flac -5` with a
-   measured bound instead of claiming parity.
+   **LPC is included**: autocorrelation, the Levinson-Durbin recursion, and
+   coefficient quantisation with error feedback, tried at every order up to 12 and
+   kept only when it costs fewer bits than the best fixed predictor. The residual
+   is computed with the *quantised* coefficients through the same floor division
+   the decoder uses — an encoder that predicts in floating point and lets the
+   decoder predict in integers produces a file only it can read.
 
-   Stereo decorrelation is likewise not attempted — channels are coded
-   independently, which is always legal and costs ratio on correlated material."
-  (:require [flac.crc :as crc]))
+   **Stereo decorrelation** is chosen the same way: a two-channel block is costed
+   as independent, left/side, right/side and mid/side, and the cheapest wins. On
+   material where the channels are similar this matters more than LPC does — a
+   duplicated channel makes the side channel all zeros."
+  (:require [flac.bits :as bits]
+            [flac.crc :as crc]))
 
 ;; ---------------------------------------------------------------------------
 ;; Bit writer
@@ -121,6 +125,108 @@
 ;; Subframe choice
 ;; ---------------------------------------------------------------------------
 
+(def ^:private max-lpc-order 12)
+(def ^:private lpc-precision 15)
+
+(defn- autocorrelation
+  "r[0..max-order] of `samples`, with a Welch window applied.
+
+   The window matters: without one the autocorrelation of a finite block implies a
+   periodic signal, and the coefficients it produces predict the wrap-around badly
+   at the block edges."
+  [samples max-order]
+  (let [n (count samples)
+        half (/ (dec n) 2.0)
+        windowed (mapv (fn [i]
+                         (let [t (/ (- i half) half)]
+                           (* (double (nth samples i)) (- 1.0 (* t t)))))
+                       (range n))]
+    (mapv (fn [k]
+            (loop [i 0 acc 0.0]
+              (if (>= i (- n k))
+                acc
+                (recur (inc i) (+ acc (* (nth windowed i) (nth windowed (+ i k))))))))
+          (range (inc max-order)))))
+
+(defn- levinson-durbin
+  "Solve for LPC coefficients at every order up to `(dec (count r))`.
+   Returns a vector indexed by order, each entry the coefficient vector."
+  [r]
+  (let [max-order (dec (count r))]
+    (loop [order 1 err (nth r 0) a [] out [nil]]
+      (if (or (> order max-order) (<= err 0.0))
+        (into out (repeat (- (inc max-order) (count out)) nil))
+        (let [k (/ (- (nth r order)
+                      (loop [i 0 acc 0.0]
+                        (if (= i (dec order))
+                          acc
+                          (recur (inc i) (+ acc (* (nth a i) (nth r (- order i 1))))))))
+                   err)
+              a' (conj (mapv (fn [i] (- (nth a i) (* k (nth a (- order i 2)))))
+                             (range (dec order)))
+                       k)
+              err' (* err (- 1.0 (* k k)))]
+          (recur (inc order) err' a' (conj out a')))))))
+
+(defn- quantise-coefficients
+  "Quantise `coefficients` to `precision` bits with a shared shift.
+
+   Error feedback (carrying the rounding error into the next coefficient) is what
+   keeps a 15-bit quantisation from drifting the prediction; libFLAC does the same."
+  [coefficients precision]
+  (let [cmax (reduce max 0.0 (map #(Math/abs (double %)) coefficients))]
+    (when (pos? cmax)
+      (let [;; leave room for the sign bit and for cmax itself
+            log2 (/ (Math/log cmax) (Math/log 2))
+            shift (min 15 (max 0 (- precision 2 (long (Math/floor log2)))))
+            lim (bits/pow2 (dec precision))]
+        (loop [i 0 error 0.0 out []]
+          (if (= i (count coefficients))
+            {:shift shift :coefficients out}
+            (let [v (+ error (* (double (nth coefficients i)) (bits/pow2 shift)))
+                  q (long (Math/round v))
+                  q (max (- lim) (min (dec lim) q))]
+              (recur (inc i) (- v q) (conj out q)))))))))
+
+(defn- lpc-residual
+  "The residual of a quantised LPC predictor, computed the way the *decoder*
+   will: integer multiply-accumulate then a floor division by 2^shift."
+  [samples coefficients shift]
+  (let [order (count coefficients)]
+    (loop [i order out (transient [])]
+      (if (= i (count samples))
+        (persistent! out)
+        (let [pred (loop [j 0 acc 0]
+                     (if (= j order)
+                       acc
+                       (recur (inc j) (+ acc (* (nth coefficients j)
+                                                (nth samples (- i j 1)))))))]
+          (recur (inc i)
+                 (conj! out (- (nth samples i)
+                               (if (zero? shift) pred (bits/floor-div pred (bits/pow2 shift)))))))))))
+
+(defn- lpc-candidates
+  "Cost an LPC subframe at every order that is worth trying."
+  [samples bps]
+  (let [n (count samples)
+        max-order (min max-lpc-order (dec n))]
+    (when (>= max-order 1)
+      (let [r (autocorrelation samples max-order)]
+        (when (pos? (nth r 0))
+          (let [solutions (levinson-durbin r)]
+            (keep (fn [order]
+                    (when-let [coeffs (nth solutions order nil)]
+                      (when-let [{:keys [shift coefficients]}
+                                 (quantise-coefficients coeffs lpc-precision)]
+                        (let [res (lpc-residual samples coefficients shift)
+                              plan (plan-residual res n order)]
+                          (when plan
+                            {:kind :lpc :order order :coefficients coefficients
+                             :shift shift :precision lpc-precision :plan plan
+                             :bits (+ 8 (* order bps) 4 5 (* order lpc-precision)
+                                      (:bits plan))})))))
+                  (range 1 (inc max-order)))))))))
+
 (def ^:private fixed-coefficients {0 [] 1 [1] 2 [2 -1] 3 [3 -3 1] 4 [4 -6 4 -1]})
 
 (defn- fixed-residual
@@ -150,9 +256,27 @@
                             {:kind :fixed :order k :residual res :plan plan
                              :bits (+ 8 (* k bps) (:bits plan))}))))
                     (range 0 5))]
-    (->> (concat [verbatim] (when constant [constant]) fixed)
+    (->> (concat [verbatim] (when constant [constant]) fixed
+                 ;; LPC is only worth its coefficient overhead sometimes, so it
+                 ;; competes on cost like everything else rather than winning by
+                 ;; default
+                 (when-not constant (lpc-candidates samples bps)))
          (sort-by :bits)
          first)))
+
+(defn- write-residual!
+  "The Rice-coded residual: coding method, partition order, then each partition's
+   parameter followed by its values."
+  [w plan]
+  (write-bits! w 2 0)                                       ; 4-bit Rice parameters
+  (write-bits! w 4 (:order plan))
+  (doseq [[param part] (map vector (:params plan) (:parts plan))]
+    (write-bits! w 4 param)
+    (let [d (bits/pow2 param)]
+      (doseq [v part]
+        (let [u (zigzag v)]
+          (write-unary! w (quot u d))
+          (when (pos? param) (write-bits! w param (mod u d))))))))
 
 (defn- write-subframe! [w subframe samples bps]
   (write-bit! w 0)                                          ; padding
@@ -160,22 +284,25 @@
     :constant (do (write-bits! w 6 0)
                   (write-bit! w 0)                          ; no wasted bits
                   (write-signed! w bps (first samples)))
+
     :verbatim (do (write-bits! w 6 1)
                   (write-bit! w 0)
                   (doseq [x samples] (write-signed! w bps x)))
+
     :fixed (let [{:keys [order plan]} subframe]
              (write-bits! w 6 (+ 8 order))
              (write-bit! w 0)
              (doseq [x (take order samples)] (write-signed! w bps x))
-             (write-bits! w 2 0)                            ; 4-bit Rice params
-             (write-bits! w 4 (:order plan))
-             (doseq [[param part] (map vector (:params plan) (:parts plan))]
-               (write-bits! w 4 param)
-               (let [d (long (Math/pow 2 param))]
-                 (doseq [v part]
-                   (let [u (zigzag v)]
-                     (write-unary! w (quot u d))
-                     (when (pos? param) (write-bits! w param (mod u d))))))))))
+             (write-residual! w plan))
+
+    :lpc (let [{:keys [order coefficients shift precision plan]} subframe]
+           (write-bits! w 6 (+ 31 order))
+           (write-bit! w 0)
+           (doseq [x (take order samples)] (write-signed! w bps x))
+           (write-bits! w 4 (dec precision))
+           (write-signed! w 5 shift)
+           (doseq [c coefficients] (write-signed! w precision c))
+           (write-residual! w plan))))
 
 ;; ---------------------------------------------------------------------------
 ;; Frames
@@ -209,10 +336,43 @@
           (write-bits! w 8 (+ 0x80 (mod (quot value (Math/pow 2 (* 6 i))) 64)))
           (recur (dec i)))))))
 
+(defn- stereo-candidates
+  "The four legal two-channel layouts, each as `[assignment channels extra-bit]`.
+
+   The side channel needs one more bit than the source, because a difference has
+   twice the range; which channel that is depends on the assignment, and the
+   decoder is unforgiving about it."
+  [l r]
+  [[1 [l r] nil]                                            ; independent
+   [8 [l (mapv - l r)] 1]                                   ; left/side
+   [9 [(mapv - l r) r] 0]                                   ; right/side
+   [10 [(mapv (fn [a b] (bits/floor-div (+ a b) 2)) l r)    ; mid/side
+        (mapv - l r)] 1]])
+
+(defn- choose-stereo
+  "Cost every layout and keep the cheapest."
+  [channels bps]
+  (if (not= 2 (count channels))
+    {:assignment (dec (count channels))
+     :subframes (mapv #(choose-subframe % bps) channels)
+     :channels channels
+     :extra nil}
+    (let [[l r] channels]
+      (->> (stereo-candidates l r)
+           (map (fn [[assignment chs extra]]
+                  (let [subs (mapv (fn [i ch]
+                                     (choose-subframe ch (+ bps (if (= i extra) 1 0))))
+                                   (range 2) chs)]
+                    {:assignment assignment :subframes subs :channels chs :extra extra
+                     :bits (reduce + (map :bits subs))})))
+           (sort-by :bits)
+           first))))
+
 (defn- frame-bytes
   "One complete frame, CRCs included."
   [channels frame-number sample-rate bps block-size]
-  (let [w (writer)]
+  (let [layout (choose-stereo channels bps)
+        w (writer)]
     (write-bits! w 14 0x3ffe)
     (write-bit! w 0)                                        ; reserved
     (write-bit! w 0)                                        ; fixed block size => frame number
@@ -221,7 +381,7 @@
           bps-code (get depth-codes bps 0)]
       (write-bits! w 4 bs-code)
       (write-bits! w 4 sr-code)
-      (write-bits! w 4 (dec (count channels)))              ; independent channels
+      (write-bits! w 4 (:assignment layout))
       (write-bits! w 3 bps-code)
       (write-bit! w 0)                                      ; reserved
       (write-utf8-number! w frame-number)
@@ -231,8 +391,8 @@
             w2 (writer)]
         (doseq [b header] (write-bits! w2 8 b))
         (write-bits! w2 8 (crc/crc8 header))
-        (doseq [ch channels]
-          (write-subframe! w2 (choose-subframe ch bps) ch bps))
+        (doseq [[i ch sub] (map vector (range) (:channels layout) (:subframes layout))]
+          (write-subframe! w2 sub ch (+ bps (if (= i (:extra layout)) 1 0))))
         (let [body (finish! w2)]
           (into body (let [c (crc/crc16 body)]
                        [(quot c 256) (mod c 256)])))))))

@@ -193,10 +193,12 @@
         (finally (rm-rf dir))))))
 
 (deftest our-ratio-against-the-reference
-  ;; This encoder has fixed predictors and no LPC, so it is *expected* to lose on
-  ;; tonal material and to tie on noise. The bound is set from measurement rather
-  ;; than aspiration: 0.56x-2.31x of `flac -5 --no-padding` on these sources.
-  ;; --no-padding matters — the reference writes an 8 KB PADDING block by default,
+  ;; With LPC and stereo decorrelation the encoder is at parity: measured
+  ;; 0.56x-1.03x of `flac -5 --no-padding` on these sources, and within 3% of
+  ;; `flac -8` on the hardest. The bound below is set from that measurement rather
+  ;; than from aspiration, and it is tight enough to catch a regression — before
+  ;; stereo decorrelation the same sources measured up to 2.31x.
+  ;; --no-padding matters: the reference writes an 8 KB PADDING block by default,
   ;; which makes a naive size comparison meaningless on short inputs.
   (if-not (have-tools?)
     (println "SKIP flac.flac-oracle-test: reference tools not available")
@@ -212,9 +214,9 @@
                   _ (sh! dir "flac" "--totally-silent" "-f" "--no-padding" "-5"
                          "-o" (str name "-ref5.flac") wav)
                   ref (.length (io/file dir (str name "-ref5.flac")))]
-              (is (< ours (* 2.6 ref))
+              (is (< ours (* 1.15 ref))
                   (str name ": ours=" ours " reference=" ref
-                       " — worse than the measured 2.31x means a real regression"))
+                       " — the measured worst case is 1.03x, so 1.15x is a regression"))
               (is (< ours (* 1.05 (.length (io/file dir wav))))
                   (str name ": compressed output must at least beat the raw WAV")))))
         (finally (rm-rf dir))))))
