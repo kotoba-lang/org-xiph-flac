@@ -53,7 +53,9 @@ jobs:
       - name: Fetch the pinned test dependency as a sibling checkout
         run: |
           set -eu
-          sha=$(grep 'org-microsoft-riff ' deps.edn | grep -o '[0-9a-f]\{40\}' | head -1)
+          # the coordinate and its :git/sha sit on separate lines here, so the
+          # match has to span them — a single-line grep silently finds nothing
+          sha=$(grep -A1 'org-microsoft-riff' deps.edn | grep -o '[0-9a-f]\{40\}' | head -1)
           test -n "$sha"
           git clone --quiet https://github.com/kotoba-lang/org-microsoft-riff.git ../org-microsoft-riff
           git -C ../org-microsoft-riff checkout --quiet "$sha"
