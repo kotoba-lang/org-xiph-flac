@@ -46,11 +46,12 @@ effect: fixed predictors alone measured 0.56x-2.31x, LPC brought the worst case 
 1.95x, and stereo decorrelation brought it to 1.03x. On material whose channels
 resemble each other, decorrelation matters more than prediction quality does.
 
-What is still missing: LPC coefficient precision is fixed at 15 bits rather than
-searched, the residual search is exhaustive rather than pruned, and there is no
-`-e`-style exhaustive model search. It is correspondingly slow — roughly 30 s per
-70 KB of 24-bit stereo under nbb, since every order from 1 to 12 is costed for
-every block.
+The LPC order is **estimated** from the Levinson-Durbin residual variance rather
+than searched, and only that order and its two neighbours are costed properly —
+measured 2.6x faster for 0.6% larger output than costing all twelve. Still
+missing: the coefficient precision is fixed at 15 bits rather than searched, the
+residual partitioning is still exhaustive, and there is no `-e`-style model
+search. It remains slow in absolute terms under nbb.
 
 When comparing sizes yourself, pass `--no-padding` to the reference: it writes an
 8 KB PADDING block by default, which makes a naive comparison on short inputs

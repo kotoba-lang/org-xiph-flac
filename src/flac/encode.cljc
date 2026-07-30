@@ -150,7 +150,11 @@
 
 (defn- levinson-durbin
   "Solve for LPC coefficients at every order up to `(dec (count r))`.
-   Returns a vector indexed by order, each entry the coefficient vector."
+
+   Returns a vector indexed by order of `{:coefficients [...] :error e}`. The
+   error is the recursion`s own estimate of the residual variance at that order,
+   and it is what makes choosing an order cheap: costing all twelve properly means
+   twelve full residual-and-partition searches per block."
   [r]
   (let [max-order (dec (count r))]
     (loop [order 1 err (nth r 0) a [] out [nil]]
@@ -166,7 +170,25 @@
                              (range (dec order)))
                        k)
               err' (* err (- 1.0 (* k k)))]
-          (recur (inc order) err' a' (conj out a')))))))
+          (recur (inc order) err' a' (conj out {:coefficients a' :error err'})))))))
+
+(defn- estimate-order
+  "The LPC order whose *estimated* cost is lowest, from the recursion`s residual
+   variance.
+
+   Each extra order buys about `n/2 * log2(err_prev/err)` bits of residual and
+   costs `precision + bps` bits of header, so the trade is decidable without
+   coding anything. libFLAC does the same; the alternative is twelve full
+   residual searches per block, which measured ~30 s per 70 KB of 24-bit stereo."
+  [solutions n bps]
+  (->> (keep-indexed (fn [order sol]
+                       (when (and sol (pos? order) (pos? (:error sol)))
+                         [order (+ (* 0.5 n (/ (Math/log (max (:error sol) 1e-9))
+                                               (Math/log 2)))
+                                   (* order (+ lpc-precision bps)))]))
+                     solutions)
+       (sort-by second)
+       ffirst))
 
 (defn- quantise-coefficients
   "Quantise `coefficients` to `precision` bits with a shared shift.
@@ -214,8 +236,11 @@
       (let [r (autocorrelation samples max-order)]
         (when (pos? (nth r 0))
           (let [solutions (levinson-durbin r)]
+            ;; Cost the estimated order and its immediate neighbours rather than
+            ;; all twelve: the estimate is good but not exact, and one order
+            ;; either side costs three searches instead of twelve.
             (keep (fn [order]
-                    (when-let [coeffs (nth solutions order nil)]
+                    (when-let [coeffs (:coefficients (nth solutions order nil))]
                       (when-let [{:keys [shift coefficients]}
                                  (quantise-coefficients coeffs lpc-precision)]
                         (let [res (lpc-residual samples coefficients shift)
@@ -225,7 +250,11 @@
                              :shift shift :precision lpc-precision :plan plan
                              :bits (+ 8 (* order bps) 4 5 (* order lpc-precision)
                                       (:bits plan))})))))
-                  (range 1 (inc max-order)))))))))
+                  (let [guess (estimate-order solutions n bps)]
+                    (if guess
+                      (distinct (filter #(and (>= % 1) (<= % max-order))
+                                        [guess (dec guess) (inc guess)]))
+                      (range 1 (inc max-order)))))))))))
 
 (def ^:private fixed-coefficients {0 [] 1 [1] 2 [2 -1] 3 [3 -3 1] 4 [4 -6 4 -1]})
 

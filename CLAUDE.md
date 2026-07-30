@@ -79,6 +79,13 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
 - **Stereo decorrelation beat LPC on the test material**: fixed-only measured up
   to 2.31x of the reference, LPC brought it to 1.95x, decorrelation to 1.03x.
   When the ratio is off, check the channel layout before the predictor.
-- **It is slow**: every LPC order from 1 to 12 is costed for every block, on top
-  of the exhaustive residual search — roughly 30 s per 70 KB of 24-bit stereo
-  under nbb. Correctness first; pruning the order search is the obvious lever.
+- **The LPC order is estimated, not searched.** The Levinson-Durbin recursion
+  already produces the residual variance at each order, so the order is chosen
+  from `n/2 * log2(err) + order * (precision + bps)` and only that order and its
+  two neighbours are costed properly. Measured A/B on the same input, stereo
+  active in both: **102.7 s to 38.8 s (2.6x) for 0.6% larger output**. Costing all
+  twelve buys almost nothing.
+- **When timing a change, hold the other variables still.** The first measurement
+  of this pruning looked like a *slowdown* (19 s to 39 s) because stereo
+  decorrelation had been added in between and quadrupled the subframe work. The
+  A/B above was taken with `git stash` on one file and the same input both times.
