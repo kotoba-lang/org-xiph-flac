@@ -1,6 +1,6 @@
 # CLAUDE.md — org-xiph-flac
 
-FLAC decoding, portable `.cljc`, zero runtime dependencies.
+FLAC in portable `.cljc`, both directions, zero runtime dependencies.
 
 ## Invariants
 
@@ -10,7 +10,13 @@ FLAC decoding, portable `.cljc`, zero runtime dependencies.
 - **Bit-exactness is the assertion.** FLAC is lossless; "decoded without
   throwing" proves nothing. Every fixture carries the reference's own samples.
 - **`test/flac/fixtures.cljc` is generated** — `nbb tools/record_fixtures.cljs`.
-- **Decoding only.** No encoder; say so rather than shipping a bad one.
+- **The encoder has fixed predictors and no LPC**, and the docs say so. Do not
+  claim ratio parity: the measured spread is 0.56x-2.31x of `flac -5`, winning on
+  noise and silence and losing on tonal material, which is exactly where LPC
+  earns its keep.
+- **The reference must accept what we write.** `flac -t` verifies both frame
+  CRCs, and `flac -d` must return the input samples exactly. A self round-trip
+  proves nothing on its own.
 - **Every failure is an `ex-info` with a `:reason`.**
 - **Both runtimes are gated** (`clojure -M:test`, `nbb run-tests.cljs`).
 
@@ -41,11 +47,28 @@ FLAC decoding, portable `.cljc`, zero runtime dependencies.
 |---|---|
 | `flac.core` | metadata blocks, frames, subframes, residuals, stereo decorrelation, `decode` |
 | `flac.bits` | MSB-first reader, unary/Rice helpers, the UTF-8-like frame number, `pow2`/`floor-div` |
+| `flac.encode` | bit writer, subframe choice by cost, Rice partitioning, frames, STREAMINFO |
+| `flac.crc` | CRC-8 (frame header) and CRC-16 (whole frame) |
 | `tools/record_fixtures.cljs` | regenerates the fixtures, reference samples included |
 
-## If an encoder is ever added
+## Encoder notes
 
-Do the Rice parameter search and the fixed predictors first; LPC coefficient
-estimation is where the real work is. The bar is not "the reference decodes it"
-but "the ratio is in the reference's league at the same level", the way
-`org-sourceware-bzip2` states it.
+- **Everything is decided by counting bits**, never by a heuristic: each channel
+  block is costed as CONSTANT, then the five fixed predictors, then VERBATIM, and
+  the cheapest wins; each residual is costed over every partition order and every
+  Rice parameter. There are no tuning constants to get wrong.
+- **The CRCs must be right or the reference rejects the file with no other
+  symptom.** CRC-8 covers the header up to its own byte; CRC-16 covers the whole
+  frame including that header.
+- **The STREAMINFO MD5 is written as all zeros**, which the format defines as
+  unknown. `flac -t` then reports it unverified and still exits 0.
+- **Rice coding costs at least one bit per sample.** An all-zero residual (a
+  straight ramp under the order-2 predictor) still costs ~512 bytes per 4096
+  samples — there is no all-zero-partition shortcut in the format, so a test
+  expecting near-zero is wrong, not the encoder.
+- **What is missing is LPC and stereo decorrelation**, in that order of value.
+  Coefficient estimation is the real work; a bad estimate is worse than a fixed
+  predictor, which is why this ships without one rather than with a guess.
+- **It is slow**: the exhaustive residual search costs roughly 10 s per 70 KB of
+  24-bit stereo under nbb. Correctness first; the search is the obvious thing to
+  prune if that ever matters.

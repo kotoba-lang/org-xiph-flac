@@ -157,3 +157,81 @@
             (testing "and the audio still decodes past all of them"
               (is (pos? (:samples (flac/decode (read-ubytes (io/file dir fl)))))))))
         (finally (rm-rf dir))))))
+
+;; ---------------------------------------------------------------------------
+;; The other direction: the reference reads what we write
+;; ---------------------------------------------------------------------------
+
+(defn- write-flac! [dir bytes name]
+  (with-open [o (io/output-stream (io/file dir name))]
+    (.write o (byte-array (map unchecked-byte bytes))))
+  name)
+
+(deftest the-reference-verifies-and-decodes-our-output
+  (if-not (have-tools?)
+    (println "SKIP flac.flac-oracle-test: reference tools not available")
+    (let [dir (temp-dir)]
+      (try
+        (doseq [[name lavfi channels codec] sources]
+          (testing name
+            (let [wav (source! dir (str name ".wav") lavfi channels codec)
+                  src (riff/parse (read-ubytes (io/file dir wav)))
+                  samples (riff/samples (read-ubytes (io/file dir wav)))
+                  ours (flac/encode {:channels samples
+                                     :sample-rate (:sample-rate src)
+                                     :bits (:bits src)})
+                  fl (write-flac! dir ours (str name "-ours.flac"))]
+              (testing "flac -t accepts it, which verifies both frame CRCs"
+                ;; the MD5 warning is expected: we write it as unknown
+                (let [{:keys [exit err]} (shell/sh "flac" "-t" fl :dir dir)]
+                  (is (zero? exit) (str "flac -t rejected our file: " err))))
+              (testing "and flac -d returns exactly the samples we encoded"
+                (sh! dir "flac" "--totally-silent" "-f" "-d" "-o" (str name "-ours.dec.wav") fl)
+                (is (= samples
+                       (riff/samples (read-ubytes (io/file dir (str name "-ours.dec.wav")))))
+                    "lossless means exactly the input back")))))
+        (finally (rm-rf dir))))))
+
+(deftest our-ratio-against-the-reference
+  ;; This encoder has fixed predictors and no LPC, so it is *expected* to lose on
+  ;; tonal material and to tie on noise. The bound is set from measurement rather
+  ;; than aspiration: 0.56x-2.31x of `flac -5 --no-padding` on these sources.
+  ;; --no-padding matters — the reference writes an 8 KB PADDING block by default,
+  ;; which makes a naive size comparison meaningless on short inputs.
+  (if-not (have-tools?)
+    (println "SKIP flac.flac-oracle-test: reference tools not available")
+    (let [dir (temp-dir)]
+      (try
+        (doseq [[name lavfi channels codec] sources]
+          (testing name
+            (let [wav (source! dir (str name ".wav") lavfi channels codec)
+                  src (riff/parse (read-ubytes (io/file dir wav)))
+                  ours (count (flac/encode {:channels (riff/samples (read-ubytes (io/file dir wav)))
+                                            :sample-rate (:sample-rate src)
+                                            :bits (:bits src)}))
+                  _ (sh! dir "flac" "--totally-silent" "-f" "--no-padding" "-5"
+                         "-o" (str name "-ref5.flac") wav)
+                  ref (.length (io/file dir (str name "-ref5.flac")))]
+              (is (< ours (* 2.6 ref))
+                  (str name ": ours=" ours " reference=" ref
+                       " — worse than the measured 2.31x means a real regression"))
+              (is (< ours (* 1.05 (.length (io/file dir wav))))
+                  (str name ": compressed output must at least beat the raw WAV")))))
+        (finally (rm-rf dir))))))
+
+(deftest a-file-we-wrote-round-trips-through-the-reference-and-back
+  ;; ours -> flac -d -> flac -8 -> our decoder. Three implementations in a chain;
+  ;; any disagreement about sample values shows up as a mismatch at the end.
+  (if-not (have-tools?)
+    (println "SKIP flac.flac-oracle-test: reference tools not available")
+    (let [dir (temp-dir)]
+      (try
+        (let [wav (source! dir "chain.wav" "sine=frequency=440:duration=0.3:sample_rate=44100"
+                           2 "pcm_s16le")
+              samples (riff/samples (read-ubytes (io/file dir wav)))
+              ours (flac/encode {:channels samples :sample-rate 44100 :bits 16})]
+          (write-flac! dir ours "chain-ours.flac")
+          (sh! dir "flac" "--totally-silent" "-f" "-d" "-o" "chain-mid.wav" "chain-ours.flac")
+          (sh! dir "flac" "--totally-silent" "-f" "-8" "-o" "chain-ref.flac" "chain-mid.wav")
+          (is (= samples (:channels (flac/decode (read-ubytes (io/file dir "chain-ref.flac")))))))
+        (finally (rm-rf dir))))))

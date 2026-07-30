@@ -9,20 +9,21 @@
    (flac/stream-info bytes) ; sample rate, channels, bit depth, total samples, MD5
    (flac/metadata bytes)   ; every metadata block, including VORBIS_COMMENT tags
    (flac/decode bytes)     ; => {:channels [[…] […]] :sample-rate … :bits …}
+   (flac/encode {:channels [[…] […]] :sample-rate 44100 :bits 16})
    ```
 
    FLAC is lossless: `decode` returns the original integer samples, per channel,
    exactly. Samples are signed integers at the stream's own bit depth — not
    normalised — for the same reason `org-microsoft-riff` keeps them that way.
 
-   **Decoding only.** A FLAC *encoder* is a second project: choosing predictor
-   orders and Rice parameters well is most of what libFLAC does, and a naive one
-   would be larger and slower than the reference at every level while adding a
-   class of only-our-decoder-reads-it bugs. Everything unimplemented raises with
-   the format's own name for it.
+   `encode` writes FLAC too, with fixed predictors and Rice-coded residuals —
+   every choice made by counting bits rather than by search. **No LPC and no
+   stereo decorrelation**, which is the whole of the ratio gap against the
+   reference and is stated rather than papered over.
 
    Bytes in are a vector of unsigned 0-255 integers."
-  (:require [flac.bits :as bits]))
+  (:require [flac.bits :as bits]
+            [flac.encode :as encode]))
 
 (def signature [0x66 0x4c 0x61 0x43])                       ; "fLaC"
 
@@ -370,3 +371,7 @@
            (recur (:end f)
                   (mapv (fn [a ch] (reduce conj! a ch)) acc (:channels f))
                   total')))))))
+
+(def encode
+  "Encode signed-integer samples into a FLAC stream. See `flac.encode/encode`."
+  encode/encode)

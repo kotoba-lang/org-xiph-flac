@@ -7,6 +7,7 @@
    over levels, depths and sources."
   (:require [flac.bits :as bits]
             [flac.core :as flac]
+            [flac.crc :as crc]
             [flac.fixtures :as fixtures]
             [riff.core :as riff]
             #?(:clj  [clojure.test :refer [deftest is testing]]
@@ -141,6 +142,92 @@
   (testing "an output ceiling bounds a hostile stream"
     (is (= :output-too-large
            (reason-of #(flac/decode (flac-bytes "sine-l8") {:max-samples 10}))))))
+
+;; ---------------------------------------------------------------------------
+;; Encoding
+;; ---------------------------------------------------------------------------
+
+(deftest encodes-and-decodes-its-own-output
+  (doseq [[name channels]
+          {"sine" [(mapv #(int (* 8000 (Math/sin (/ % 20.0)))) (range 2000))
+                   (mapv #(int (* 4000 (Math/sin (/ % 13.0)))) (range 2000))]
+           "constant" [(vec (repeat 1000 1234))]
+           "silence" [(vec (repeat 1000 0)) (vec (repeat 1000 0))]
+           "ramp" [(vec (range -500 500))]
+           "extremes" [[-32768 32767 0 -1 1 -32768 32767]]
+           "one-sample" [[42]]
+           "pseudo-random" [(mapv #(- (mod (* 1103515245 (inc %)) 65536) 32768) (range 1500))]}]
+    (testing name
+      (let [out (flac/encode {:channels channels :sample-rate 44100 :bits 16})
+            back (flac/decode out)]
+        (is (flac/flac? out))
+        (is (= channels (:channels back)) "lossless means exactly the input back")
+        (is (= (count (first channels)) (:samples back)))
+        (is (= 44100 (:sample-rate back)))
+        (is (= 16 (:bits back)))))))
+
+(deftest encodes-across-widths-and-channel-counts
+  (doseq [bits [8 12 16 20 24 32]]
+    (testing (str bits "-bit")
+      (let [lim (bits/pow2 (dec bits))
+            ch (mapv #(- (mod (* 7919 (inc %)) (* 2 lim)) lim) (range 300))
+            out (flac/encode {:channels [ch] :sample-rate 8000 :bits bits})]
+        (is (= [ch] (:channels (flac/decode out))))
+        (is (= bits (:bits (flac/decode out)))))))
+  (doseq [n-ch [1 2 3 8]]
+    (testing (str n-ch " channels")
+      (let [chs (mapv (fn [c] (mapv #(* (inc c) (mod % 100)) (range 400))) (range n-ch))
+            out (flac/encode {:channels chs :sample-rate 48000 :bits 16})]
+        (is (= chs (:channels (flac/decode out))))))))
+
+(deftest encodes-across-block-boundaries
+  ;; the last frame is short, which forces the explicit 16-bit block-size field
+  (doseq [n [1 255 256 4095 4096 4097 8192 8193]]
+    (testing (str n " samples")
+      (let [ch (mapv #(mod (* 37 %) 3000) (range n))
+            out (flac/encode {:channels [ch] :sample-rate 44100 :bits 16 :block-size 4096})]
+        (is (= [ch] (:channels (flac/decode out))) (str n " samples did not round-trip"))))))
+
+(deftest encoding-picks-the-cheap-subframe
+  (testing "a constant channel costs a handful of bytes, not one per sample"
+    (let [out (flac/encode {:channels [(vec (repeat 4096 777))] :sample-rate 44100 :bits 16})]
+      (is (< (count out) 120) (str "constant block encoded to " (count out) " bytes"))))
+  (testing "a straight ramp costs about a bit a sample, not sixteen"
+    ;; The order-2 fixed predictor makes the residual all zeros, and Rice coding
+    ;; still spends one bit on each — there is no all-zero-partition shortcut in
+    ;; the format. So ~512 bytes for 4096 samples is the floor, not ~0.
+    (let [ch (vec (range 4096))
+          out (flac/encode {:channels [ch] :sample-rate 44100 :bits 16})]
+      (is (< (count out) 700))
+      (is (> (count out) 500) "and it cannot beat the one-bit-per-sample floor")))
+  (testing "incompressible input does not blow up past verbatim plus framing"
+    (let [ch (mapv #(- (mod (* 2654435761 (inc %)) 65536) 32768) (range 2048))
+          out (flac/encode {:channels [ch] :sample-rate 44100 :bits 16})]
+      (is (< (count out) (* 1.05 4096)) "2 bytes a sample plus framing"))))
+
+(deftest encoding-rejects-what-it-cannot-write
+  (is (= :bad-input (reason-of #(flac/encode {:channels [] :bits 16}))))
+  (is (= :bad-input (reason-of #(flac/encode {:channels [[1 2 3] [1 2]] :bits 16}))))
+  (is (= :unsupported (reason-of #(flac/encode {:channels [[1]] :bits 14})))
+      "FLAC's sample-size codes do not include 14 bits")
+  (is (= :unsupported (reason-of #(flac/encode {:channels (vec (repeat 9 [1])) :bits 16})))
+      "at most eight channels")
+  (testing "a sample that does not fit the declared width is a caller bug"
+    (is (= :bad-input (reason-of #(flac/encode {:channels [[32768]] :bits 16}))))
+    (is (= :bad-input (reason-of #(flac/encode {:channels [[-129]] :bits 8}))))))
+
+(deftest crcs-are-two-different-functions
+  (testing "CRC-8 and CRC-16 use different polynomials"
+    (is (not= (crc/crc8 [1 2 3 4]) (mod (crc/crc16 [1 2 3 4]) 256))))
+  (testing "both start at zero, so an empty input hashes to zero"
+    (is (zero? (crc/crc8 [])))
+    (is (zero? (crc/crc16 []))))
+  (testing "and a single bit flip changes them"
+    (is (not= (crc/crc8 [0x00]) (crc/crc8 [0x01])))
+    (is (not= (crc/crc16 [0x00]) (crc/crc16 [0x01]))))
+  (testing "the real proof is that the reference accepts our frames"
+    ;; `flac -t` verifies both CRCs; that assertion is in the oracle suite
+    (is (flac/flac? (flac/encode {:channels [[1 2 3]] :bits 16})))))
 
 (deftest signature-sniff
   (is (flac/flac? (flac-bytes "sine-l8")))

@@ -1,7 +1,7 @@
 # kotoba-lang/org-xiph-flac
 
-Zero-dependency portable `.cljc` **FLAC** decoder (xiph.org's format
-specification).
+Zero-dependency portable `.cljc` **FLAC** codec (xiph.org's format
+specification) — decoding, and encoding with fixed predictors.
 
 ```clojure
 (require '[flac.core :as flac])
@@ -10,6 +10,7 @@ specification).
 (flac/stream-info bytes) ; sample rate, channels, bit depth, total samples, MD5
 (flac/metadata bytes)    ; every metadata block, VORBIS_COMMENT tags included
 (flac/decode bytes)      ; => {:channels [[…] […]] :sample-rate … :bits … :samples n}
+(flac/encode {:channels [[…] […]] :sample-rate 44100 :bits 16})
 ```
 
 FLAC is lossless, so there is exactly one right answer: `decode` returns the
@@ -26,13 +27,34 @@ and sample-rate coding including the explicit 8- and 16-bit forms, and
 STREAMINFO / VORBIS_COMMENT metadata with the remaining block types reported by
 type, offset and length.
 
+## Encoding
+
+`encode` writes FLAC with the **fixed predictors** and Rice-coded residuals,
+every choice made by counting bits: each block is costed as CONSTANT, as each of
+the five fixed predictors, and as VERBATIM, and the cheapest wins; each residual
+is costed over every partition order and Rice parameter. No tuning constants.
+
+`flac -t` accepts the output — which verifies both frame CRCs — and `flac -d`
+returns the input samples exactly.
+
+**No LPC and no stereo decorrelation**, which is the whole of the ratio gap and
+is measured rather than glossed: **0.56x-2.31x of `flac -5`** on the suite's
+sources, winning on noise and near-silence, losing by ~2.3x on tonal material
+where linear prediction earns its keep. Coefficient estimation is the real work
+in libFLAC and a bad estimate is worse than a fixed predictor, so this ships
+without one rather than with a guess. The exhaustive residual search also makes it
+slow — roughly 10 s per 70 KB of 24-bit stereo under nbb.
+
+When comparing sizes yourself, pass `--no-padding` to the reference: it writes an
+8 KB PADDING block by default, which makes a naive comparison on short inputs
+meaningless (it reported our output as 30x *smaller* until I noticed).
+
 ## Not implemented
 
-**No encoder.** Choosing predictor orders and Rice parameters well is most of
-what libFLAC does; a naive encoder would be larger and slower than the reference
-at every level while adding a class of only-our-decoder-reads-it bugs.
-
-**The STREAMINFO MD5 is recorded, not verified** — there is no MD5 in this
+**The STREAMINFO MD5 is recorded on read and written as all zeros** (the format's
+value for *unknown*, which `flac -t` reports as unverified rather than as a
+failure), because there is no MD5 in this workspace and a codec is the wrong place
+to add one. On read it is** — there is no MD5 in this
 workspace, and a codec is the wrong place to add one. Frame CRC-8/CRC-16 fields
 are read past rather than checked; corruption still surfaces, because a damaged
 frame fails structurally (the suite flips a bit and asserts it is caught).
