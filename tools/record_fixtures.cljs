@@ -10,7 +10,7 @@
    Files are kept short (0.02 s) because the expected samples are inlined."
   (:require ["node:child_process" :as cp]
             ["node:fs" :as fs]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (def ^:private cases
   ;; [name lavfi-source channels codec level] — chosen for subframe coverage:
