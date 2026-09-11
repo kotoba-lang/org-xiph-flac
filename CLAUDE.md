@@ -9,7 +9,7 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
   `org-microsoft-riff` is a *test* dependency: the reference decoder emits WAV.
 - **Bit-exactness is the assertion.** FLAC is lossless; "decoded without
   throwing" proves nothing. Every fixture carries the reference's own samples.
-- **`test/flac/fixtures.cljk` is generated** — `nbb tools/record_fixtures.cljk`.
+- **`test/flac/fixtures.cljk` is generated** — `kbb --backend sci tools/record_fixtures.cljk`.
 - **The encoder has fixed predictors, LPC and stereo decorrelation**, and is at
   parity: 0.56x-1.03x of `flac -5` measured. The suite's bound is 1.15x, tight
   enough to catch a regression — do not loosen it without a measurement.
@@ -17,7 +17,7 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
   CRCs, and `flac -d` must return the input samples exactly. A self round-trip
   proves nothing on its own.
 - **Every failure is an `ex-info` with a `:reason`.**
-- **Both runtimes are gated** (`clojure -M:test`, `nbb run-tests.cljk`).
+- **Both runtimes are gated** (`kbb -M:test`, `kbb --backend sci run-tests.cljk`).
 
 ## Traps
 
