@@ -91,7 +91,7 @@ buffer in, whole buffer out, bounded by `:max-samples`.
 ```sh
 clojure -M:test        # JVM: portable suite + the `flac` binary, sample for sample
 clojure -M:local:test  # …against sibling checkouts
-nbb run-tests.cljs     # ClojureScript: the portable suite, recorded fixtures
+nbb run-tests.cljk     # ClojureScript: the portable suite, recorded fixtures
 clojure -M:lint
 ```
 
@@ -105,5 +105,5 @@ table, a 3-second file, and an encoder-written VORBIS_COMMENT.
 Regenerate the fixtures with:
 
 ```sh
-nbb tools/record_fixtures.cljs
+nbb tools/record_fixtures.cljk
 ```
