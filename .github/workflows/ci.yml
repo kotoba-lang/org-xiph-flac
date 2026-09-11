@@ -41,7 +41,7 @@ jobs:
         run: clojure -M:lint
 
   cljs:
-    name: nbb run-tests.cljs (ClojureScript)
+    name: nbb run-tests.cljk (ClojureScript)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,4 +60,4 @@ jobs:
           git clone --quiet https://github.com/kotoba-lang/org-microsoft-riff.git ../org-microsoft-riff
           git -C ../org-microsoft-riff checkout --quiet "$sha"
           echo "org-microsoft-riff @ $sha"
-      - run: nbb run-tests.cljs
+      - run: nbb run-tests.cljk

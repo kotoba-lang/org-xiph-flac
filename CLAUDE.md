@@ -5,11 +5,11 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
 ## Invariants
 
 - **No host codec in `src/`.** The `flac` and `ffmpeg` binaries appear in
-  `test/flac/flac_oracle_test.clj` and `tools/record_fixtures.cljs` only.
+  `test/flac/flac_oracle_test.cljk` and `tools/record_fixtures.cljk` only.
   `org-microsoft-riff` is a *test* dependency: the reference decoder emits WAV.
 - **Bit-exactness is the assertion.** FLAC is lossless; "decoded without
   throwing" proves nothing. Every fixture carries the reference's own samples.
-- **`test/flac/fixtures.cljc` is generated** — `nbb tools/record_fixtures.cljs`.
+- **`test/flac/fixtures.cljk` is generated** — `nbb tools/record_fixtures.cljk`.
 - **The encoder has fixed predictors, LPC and stereo decorrelation**, and is at
   parity: 0.56x-1.03x of `flac -5` measured. The suite's bound is 1.15x, tight
   enough to catch a regression — do not loosen it without a measurement.
@@ -17,7 +17,7 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
   CRCs, and `flac -d` must return the input samples exactly. A self round-trip
   proves nothing on its own.
 - **Every failure is an `ex-info` with a `:reason`.**
-- **Both runtimes are gated** (`clojure -M:test`, `nbb run-tests.cljs`).
+- **Both runtimes are gated** (`clojure -M:test`, `nbb run-tests.cljk`).
 
 ## Traps
 
@@ -48,7 +48,7 @@ FLAC in portable `.cljc`, both directions, zero runtime dependencies.
 | `flac.bits` | MSB-first reader, unary/Rice helpers, the UTF-8-like frame number, `pow2`/`floor-div` |
 | `flac.encode` | bit writer, subframe choice by cost, Rice partitioning, frames, STREAMINFO |
 | `flac.crc` | CRC-8 (frame header) and CRC-16 (whole frame) |
-| `tools/record_fixtures.cljs` | regenerates the fixtures, reference samples included |
+| `tools/record_fixtures.cljk` | regenerates the fixtures, reference samples included |
 
 ## Encoder notes
 
