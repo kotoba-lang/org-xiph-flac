@@ -89,10 +89,10 @@ buffer in, whole buffer out, bounded by `:max-samples`.
 ## Test
 
 ```sh
-clojure -M:test        # JVM: portable suite + the `flac` binary, sample for sample
-clojure -M:local:test  # …against sibling checkouts
-nbb run-tests.cljk     # ClojureScript: the portable suite, recorded fixtures
-clojure -M:lint
+kbb -M:test        # JVM: portable suite + the `flac` binary, sample for sample
+kbb -M:local:test  # …against sibling checkouts
+kbb --backend sci run-tests.cljk     # ClojureScript: the portable suite, recorded fixtures
+kbb -M:lint
 ```
 
 The portable fixtures carry **the reference decoder's own output**, so
@@ -105,5 +105,5 @@ table, a 3-second file, and an encoder-written VORBIS_COMMENT.
 Regenerate the fixtures with:
 
 ```sh
-nbb tools/record_fixtures.cljk
+kbb --backend sci tools/record_fixtures.cljk
 ```

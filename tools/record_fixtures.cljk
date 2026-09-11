@@ -1,7 +1,7 @@
 (ns record-fixtures
   "Regenerate test/flac/fixtures.cljk from real FLAC files.
 
-       nbb tools/record_fixtures.cljk
+       kbb --backend sci tools/record_fixtures.cljk
 
    Each fixture carries the `.flac` bytes **and the samples the reference decoder
    produces from them**, so the portable suite asserts bit-exactness on
