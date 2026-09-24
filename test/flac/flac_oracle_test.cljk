@@ -10,7 +10,7 @@
    Skipped loudly when `flac` or `ffmpeg` is missing."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [flac.core :as flac]
             [riff.core :as riff])
   (:import [java.io File]
