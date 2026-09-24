@@ -10,7 +10,7 @@
             [flac.crc :as crc]
             [flac.fixtures :as fixtures]
             [riff.core :as riff]
-            #?(:clj  [clojure.test :refer [deftest is testing]]
+            #?(:clj  [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])))
 
 (defn- b64->bytes [s]
