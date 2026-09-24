@@ -8,13 +8,12 @@
    subframe type and each stereo decorrelation mode actually occurs.
 
    Skipped loudly when `flac` or `ffmpeg` is missing."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as kio] [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [kotoba.test :refer [deftest is testing]]
             [flac.core :as flac]
             [riff.core :as riff])
-  (:import [java.io File]
-           [java.nio.file Files]))
+  (:import [java.io File]))
 
 (defn- have-tools? []
   (try (and (zero? (:exit (shell/sh "bash" "-c" "command -v flac")))
@@ -22,11 +21,11 @@
        (catch Exception _ false)))
 
 (defn- temp-dir []
-  (.toFile (Files/createTempDirectory
-            "org-xiph-flac-" (make-array java.nio.file.attribute.FileAttribute 0))))
+  (kio/temp-dir
+            "org-xiph-flac-"))
 
 (defn- rm-rf [^File f] (doseq [c (reverse (file-seq f))] (.delete ^File c)))
-(defn- read-ubytes [^File f] (mapv #(bit-and (int %) 0xff) (Files/readAllBytes (.toPath f))))
+(defn- read-ubytes [^File f] (mapv #(bit-and (int %) 0xff) (kio/read-all-bytes f)))
 
 (defn- sh! [dir & args]
   (let [{:keys [exit err out]} (apply shell/sh (concat args [:dir dir]))]
