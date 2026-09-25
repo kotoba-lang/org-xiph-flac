@@ -5,7 +5,7 @@
    not that decoding runs: each fixture carries the reference's own output, so
    ClojureScript checks the same thing the JVM does. The oracle suite adds breadth
    over levels, depths and sources."
-  (:require [flac.bits :as bits]
+  (:require [kotoba.bytes :as kbytes] [flac.bits :as bits]
             [flac.core :as flac]
             [flac.crc :as crc]
             [flac.fixtures :as fixtures]
@@ -15,7 +15,7 @@
 
 (defn- b64->bytes [s]
   #?(:clj (mapv #(bit-and (int %) 0xff)
-                (.decode (java.util.Base64/getDecoder) ^String s))
+                (kbytes/base64-decode-bytes ^String s))
      :cljs (let [d (js/atob s)]
              (mapv #(.charCodeAt d %) (range (.-length d))))))
 
