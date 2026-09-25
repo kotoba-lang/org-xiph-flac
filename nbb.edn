@@ -1,4 +1,7 @@
 {:deps {
+        ;; kotoba.bytes replaced java.util.Base64 here (2026-09-24). An explicit
+        ;; floor: tools.deps takes the NEWEST sha it is shown.
+        io.github.kotoba-lang/bytes {:git/sha "d5259f35ab7c4f5a66e63ca29ed4dcf7ba3f1ac5"}
         ;; kotoba.io replaced java.nio.file.Files here (2026-09-24). An explicit
         ;; floor: temp-dir temp-file read-all-bytes write-bytes write-string
         ;; delete-if-exists are in kotoba.io from this sha, and tools.deps takes
