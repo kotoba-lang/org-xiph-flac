@@ -1,4 +1,4 @@
-# CLAUDE.md — org-xiph-flac
+# AGENTS.md — org-xiph-flac
 
 FLAC in portable `.cljc`, both directions, zero runtime dependencies.
 
